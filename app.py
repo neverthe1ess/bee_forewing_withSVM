@@ -1,7 +1,10 @@
+import joblib
 import torch
 import torchvision.transforms as transforms
 import numpy as np
 import matplotlib.pyplot as plt
+import procrustes as pr 
+
 from scipy.spatial import procrustes
 from sklearn.cluster import KMeans
 from sklearn.metrics import accuracy_score
@@ -9,9 +12,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from torch.utils.data import DataLoader
-
 from model import UNet
-from util import load, Dataset
+from util import load, Dataset, shift_angle
 
 # 1. 모델 불러오기
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -37,7 +39,6 @@ dataset_test = Dataset(data_dir='./dataset',
 loader_test = DataLoader(dataset_test, batch_size=batch_size,
                          shuffle=False, num_workers=0)
 
-
 # 3-1. 랜드마크 픽셀 군집화 함수
 def extract_landmarks_kmeans(binary_mask, K=19):
     coords = np.argwhere(binary_mask)  # (N, 2)
@@ -45,22 +46,11 @@ def extract_landmarks_kmeans(binary_mask, K=19):
     if num_pixels < K:
         return None
 
-    kmeans = KMeans(n_clusters=K, random_state=42)
+    kmeans = KMeans(n_clusters=K, random_state=42, n_init='auto')
     kmeans.fit(coords)
     centers = kmeans.cluster_centers_
     centers = np.round(centers).astype(int)  # (K, 2) 정수 좌표 (y, x)
     return centers
-
-
-# 3-2. 배치 단위로 랜드마크 추출
-def extract_landmarks_kmeans_batch(output, K=19):
-    binary_output = (torch.sigmoid(output) > 0.5).cpu().numpy()  # (B, 1, H, W)
-    landmarks_batch = []
-    for i in range(binary_output.shape[0]):
-        mask_2d = binary_output[i, 0]  # (H, W)
-        centers = extract_landmarks_kmeans(mask_2d, K=K)
-        landmarks_batch.append(centers)
-    return landmarks_batch
 
 
 # 4. 추론 (U-Net → K-means 랜드마크 추출)
@@ -68,23 +58,32 @@ landmark_list = []
 label_list = []
 
 with torch.no_grad():
+    # 배치 단위
     for imgs, labels in loader_test:
+        # imgs.shape = (Batch_size, 1, 512, 512)
         imgs = imgs.to(device)
         outputs = net(imgs)
+        binarized = (outputs > 0.5).float() # 2진화 Tensor
 
-        # 랜드마크 추출
-        landmark_batch = extract_landmarks_kmeans_batch(outputs, K=19)
+        for i in range(binarized.shape[0]): # Batch_size 만큼 반복
+            # (1,C, H, W) -> (H, W)
+            mask_2d = binarized[i, 0].cpu().numpy()
 
-        for landmark, label in zip(landmark_batch, labels):
-            if landmark is not None:
-                landmark_list.append(landmark)
-                label_list.append(label.item())
+            # 회전 정렬
+            rotated = shift_angle([mask_2d])[0]
+
+            # 뭉친 픽셀 들 사이에서 중심 점을 찾기 (K-Means)
+            centers = extract_landmarks_kmeans(rotated, K=19)
+            if centers is not None:
+                landmark_list.append(centers)
+                label_list.append(labels[i].item())
             else:
-                print("활성화 픽셀이 19개 미만이라 넘어감")
+                print("활성화 픽셀이 19개 미만임")
 
-landmark_list = np.array(landmark_list)  # (N, 19, 2)
-label_list = np.array(label_list)  # (N,)
-
+# landmark_list -> (N, 19, 2) 
+all_dots = np.array(landmark_list, dtype=float)
+label_array = np.array(label_list)
+    
 
 # 5. Procrustes 정규화
 def procrustes_transform(X):
@@ -96,17 +95,17 @@ def procrustes_transform(X):
     return np.array(X_transformed)
 
 
-X = procrustes_transform(landmark_list)  # (N, 38)
-y = label_list  # (N,)
+X = procrustes_transform(all_dots)
+y = label_array
 
 # 6. SVM 분류
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 X_train, X_test, y_train, y_test = train_test_split(
-    X_scaled, y, test_size=0.2, random_state=42, stratify=y
+    X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-svm_model = SVC(kernel='rbf', C=30, gamma=0.17, probability=True)
+svm_model = SVC(kernel='rbf', C=30, gamma=0.30, probability=True)
 svm_model.fit(X_train, y_train)
 
 y_pred = svm_model.predict(X_test)
@@ -114,9 +113,7 @@ accuracy = accuracy_score(y_test, y_pred)
 print(f"SVM 분류 정확도: {accuracy:.2%}")
 
 
-# -------------------------------
 # 7. 랜드마크 시각화 함수 (모든 샘플)
-# -------------------------------
 def visualize_landmarks_on_image(dataset, all_centers):
     """
     dataset: Dataset 객체
@@ -153,4 +150,9 @@ def visualize_landmarks_on_image(dataset, all_centers):
 
 
 # 8. 모든 샘플 시각화
-visualize_landmarks_on_image(dataset_test, landmark_list)
+visualize_landmarks_on_image(dataset_test, all_dots)
+
+
+
+
+

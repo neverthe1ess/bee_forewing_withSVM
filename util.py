@@ -1,10 +1,11 @@
 import glob
 import os
-
+import cv2 
 import numpy as np
 import torch
-from PIL import Image
 
+from PIL import Image
+from sklearn.decomposition import PCA
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, data_dir, transform=None):
@@ -53,3 +54,36 @@ def load(ckpt_dir, net, optim):
 
     return net, optim, epoch
 
+# 기울어진 이미지를 정렬(PCA)
+def shift_angle(masks):
+    '''
+    input -> 2차원 넘파이 배열(rows, cols)이 담긴 리스트
+    '''
+    for index, img in enumerate(masks):
+        rows, cols = img.shape
+        center = (cols/2,rows/2)
+        _, img = cv2.threshold(img, 210, 255, cv2.THRESH_BINARY)
+
+        dots = np.argwhere(img == 255) # 흰색 찾기
+        if len(dots) == 0:
+            continue
+
+        pca = PCA(n_components=2)
+        pca.fit_transform(dots)
+
+        vec = pca.components_ # eigen vector
+        angle = np.degrees(np.arctan2(*vec.T[::-1])) % 360.0
+		
+		# 이미지 이동(평균 좌표가 이미지의 중심점에 오도록 평행 이동)
+        M = np.float32([[1,0,-(pca.mean_[1]-center[1])],
+                        [0,1,-(pca.mean_[0]-center[0])]
+                        ])
+        img = cv2.warpAffine(img,M,(cols,rows))
+		
+		# 계산된 PCA 각도만큼 회전 
+        M = cv2.getRotationMatrix2D((center),-angle[1],1)
+        img = cv2.warpAffine(img,M,(cols,rows))
+        
+        masks[index] = img
+    
+    return masks

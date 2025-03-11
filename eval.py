@@ -1,11 +1,27 @@
 import torch
+import torchvision.transforms as transforms
 
-# 저장된 모델 로드
-from svm import procrustes_transform, extract_landmarks
+from app import procrustes_transform 
 import joblib
+from model import UNet
+from util import Dataset
+from torch.utils.data import DataLoader
 
-svm_model = joblib.load("svm_model.pkl")
-scaler = joblib.load("scaler.pkl")
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+svm_model = joblib.load("SVM.joblib")
+net = UNet().to(device)
+batch_size = 4
+
+input_transforms = transforms.Compose([
+    transforms.Resize((512, 512)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=0.5, std=0.5)
+])
+
+dataset_test = Dataset(data_dir='./dataset',
+                       transform=input_transforms)
+loader_test = DataLoader(dataset_test, batch_size=batch_size,
+                         shuffle=False, num_workers=0)
 
 def predict_species(output):
     """
@@ -20,12 +36,9 @@ def predict_species(output):
     # Procrustes 정규화 적용
     landmarks = procrustes_transform(landmarks.reshape(1, -1))
 
-    # 스케일링 적용
-    landmarks_scaled = scaler.transform(landmarks)
-
     # SVM 예측 수행
-    prediction = svm_model.predict(landmarks_scaled)
-    probabilities = svm_model.predict_proba(landmarks_scaled)
+    prediction = svm_model.predict(landmarks)
+    probabilities = svm_model.predict_proba(landmarks)
 
     print(f"🐝 예측된 아종: {prediction[0]}")
     print("📊 예측 확률:")

@@ -1,7 +1,7 @@
 import torch
 import torchvision.transforms as transforms
 
-from app import procrustes_transform 
+from app_angle import procrustes_transform 
 import joblib
 from model import UNet
 from util import Dataset

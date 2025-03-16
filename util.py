@@ -46,7 +46,7 @@ def load(ckpt_dir, net, optim):
     ckpt_lst = os.listdir(ckpt_dir)
     ckpt_lst.sort(key=lambda f: int(''.join(filter(str.isdigit, f))))
 
-    dict_model = torch.load('%s/%s' % (ckpt_dir, ckpt_lst[-1]), map_location='cpu')
+    dict_model = torch.load('%s/%s' % (ckpt_dir, ckpt_lst[-1]))
 
     net.load_state_dict(dict_model['net'])
     optim.load_state_dict(dict_model['optim'])

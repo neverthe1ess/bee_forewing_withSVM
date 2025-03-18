@@ -1,4 +1,3 @@
-import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,11 +11,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
 
-# ==============================
 # 0. U-Net, Dataset 등 불러오기
-# ==============================
 from model import UNet
-from util import load, Dataset, shift_angle
+from util import load, Dataset
 
 
 # 1. 모델 로드 및 평가 모드 전환
@@ -75,14 +72,14 @@ with torch.no_grad():
         
         # 배치 내 각 이미지를 개별 처리
         for i in range(binarized.shape[0]):
-            mask_2d = binarized[i, 0].cpu().numpy()
+            mask_2d = binarized[i, 0].cpu().numpy() # shape =(H,W)
             
             # 회전 정렬 (필요하다면 사용)
             # 여러 이미지를 같은 각도로 보정하려는 용도
-            rotated = shift_angle([mask_2d])[0]
+            # rotated = shift_angle([mask_2d])[0]
 
             # K-Means로 19개 중심점(랜드마크) 찾기
-            centers = extract_landmarks_kmeans(rotated, K=19)
+            centers = extract_landmarks_kmeans(mask_2d, K=19)
             if centers is not None:
                 landmark_list.append(centers)
                 label_list.append(labels[i].item())
@@ -99,9 +96,41 @@ def sort_dots(dots):
     """
     dots: (19, 2) 형태의 랜드마크 좌표 (y, x)
     x좌표(dots[:, 1]) 기준 오름차순 정렬
+    x좌표 픽셀 차이가 10 이하인 경우 y좌표로 정렬
     """
-    sorted_indices = np.argsort(dots[:, 1])  # x축 기준 정렬
-    return dots[sorted_indices]
+    # x좌표로 먼저 정렬
+    sorted_by_x = dots[np.argsort(dots[:, 1])]
+    
+    # 결과 배열 초기화
+    result = np.zeros_like(sorted_by_x)
+    
+    # 현재 처리 중인 인덱스
+    current_idx = 0
+    
+    while current_idx < len(sorted_by_x):
+        # 현재 x값
+        current_x = sorted_by_x[current_idx, 1]
+        
+        # x값이 현재값과 10 이하 차이나는 점들의 인덱스 찾기
+        similar_x_indices = []
+        for i in range(current_idx, len(sorted_by_x)):
+            if sorted_by_x[i, 1] - current_x <= 10:
+                similar_x_indices.append(i)
+            else:
+                break
+        
+        # 해당 점들을 y값으로 정렬
+        if len(similar_x_indices) > 1:
+            points_to_sort = sorted_by_x[similar_x_indices]
+            sorted_by_y = points_to_sort[np.argsort(points_to_sort[:, 0])]
+            result[current_idx:current_idx+len(similar_x_indices)] = sorted_by_y
+        else:
+            result[current_idx] = sorted_by_x[current_idx]
+        
+        # 다음 처리할 인덱스로 이동
+        current_idx += len(similar_x_indices)
+    
+    return result
 
 
 # 6. 가장 가까운 점과 각도 계산 함수
@@ -168,14 +197,13 @@ for i in range(len(all_dots)):
     angle_features_sin_cos.append(feature_38)
 
 X_sin_cos = np.array(angle_features_sin_cos)  # shape: (N, 38)
-print(X_sin_cos)
 y = label_array  # (N,)
 
 
 # 9. SVM 분류
 # 9-1. Train/Test split
 X_train, X_test, y_train, y_test = train_test_split(
-    X_sin_cos, y, test_size=0.2, random_state=42, stratify=y
+    X_sin_cos, y, test_size=0.5, random_state=42, stratify=y
 )
 
 # 9-2. (선택) 표준화
@@ -229,7 +257,7 @@ def visualize_landmarks_on_image(dataset, all_centers):
 # 시각화 예시
 # visualize_landmarks_on_image(dataset_test, all_dots)
 
-def visualize_overlapped_landmarks(dataset, all_centers, sample_idx1=0, sample_idx2=40, alpha1=0.7, alpha2=0.3):
+def visualize_overlapped_landmarks(dataset, all_centers, sample_idx1=0, sample_idx2=80, alpha1=0.7, alpha2=0.3):
     """
     dataset: Dataset 객체
     all_centers: (N,19,2) 형태
@@ -281,4 +309,4 @@ def visualize_overlapped_landmarks(dataset, all_centers, sample_idx1=0, sample_i
     plt.show()
 
 # 시각화 예시 (0번과 1번 샘플을 오버랩)
-visualize_overlapped_landmarks(dataset_test, all_dots, sample_idx1=0, sample_idx2=1, alpha1=0.7, alpha2=0.3)
+visualize_overlapped_landmarks(dataset_test, all_dots, sample_idx1=0, sample_idx2=80, alpha1=0.7, alpha2=0.3)

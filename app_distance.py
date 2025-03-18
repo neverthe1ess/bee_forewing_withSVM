@@ -95,55 +95,6 @@ def sort_dots(dots):
     sorted_dots = dots[sorted_indices]
     return sorted_dots
 
-# 4.3 각도 계산
-def calculate_angles_between_nearest_points(dots):
-    """
-    dots: (19, 2) 형태의 랜드마크 좌표 배열
-    -> 각 점에서 가장 가까운 다른 점을 찾고, 두 점을 잇는 선과 x축 사이의 각도를 계산
-    """
-    n_points = dots.shape[0]  # 점의 개수 (19)
-    nearest_points = []
-    angles = []
-    
-    for i in range(n_points):
-        current_point = dots[i]
-        
-        # 자기 자신을 제외한 모든 점과의 거리 계산
-        distances = np.sqrt(np.sum((dots - current_point)**2, axis=1))
-        
-        # 자기 자신과의 거리는 0이므로, 가장 작은 값이 아닌 두 번째로 작은 값을 찾아야 함
-        # inf로 설정하여 최소값 계산에서 제외
-        distances[i] = np.inf
-        
-        # 가장 가까운 점의 인덱스 찾기
-        nearest_idx = np.argmin(distances)
-        nearest_point = dots[nearest_idx]
-        
-        # 두 점 사이의 벡터 계산 (y, x)
-        vector = nearest_point - current_point
-        
-        # x축과의 각도 계산 (라디안)
-        # arctan2는 y, x 순서로 인자를 받음
-        angle_rad = np.arctan2(vector[0], vector[1])
-        
-        # 라디안을 도(degree)로 변환
-        angle_deg = np.degrees(angle_rad)
-        
-        nearest_points.append(nearest_point)
-        angles.append(angle_deg)
-    
-    return np.array(nearest_points), np.array(angles)
-
-# 모든 샘플에 대해 각 점의 가장 가까운 점과 각도 계산
-for i in range(len(all_dots)):
-    sorted_landmarks = sort_dots(all_dots[i])
-    nearest_points, angles = calculate_angles_between_nearest_points(sorted_landmarks)
-    
-    print(f"Sample {i}:")
-    for j in range(len(sorted_landmarks)):
-        print(f"  점 {j} {sorted_landmarks[j]}: 가장 가까운 점 {nearest_points[j]}, 각도 {angles[j]:.2f}도")
-
-
 
 # 5. Procrustes 정규화
 def procrustes_transform(X):
@@ -154,9 +105,16 @@ def procrustes_transform(X):
         X_transformed.append(transformed.flatten())
     return np.array(X_transformed)
 
+dots_list = []
 
-X = procrustes_transform(all_dots)
-print(sort_dots(all_dots[0]))
+for i in range(len(all_dots)):
+    # (19,2) 정렬 (원하는 기준으로)
+    sorted_landmarks = sort_dots(all_dots[i])
+    dots_list.append(sorted_landmarks)
+
+dots_list = np.array(dots_list)
+
+X = procrustes_transform(dots_list)
 y = label_array
 
 # 6. SVM 분류

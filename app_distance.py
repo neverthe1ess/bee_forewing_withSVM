@@ -87,22 +87,68 @@ label_array = np.array(label_list)
 # 4-2. 좌표 정렬
 def sort_dots(dots):
     """
-    dots: (19, 2) 형태의 랜드마크 좌표 배열
-    -> x좌표(dots[:, 1])를 기준으로 오름차순 정렬하여 반환
+    dots: (19, 2) 형태의 랜드마크 좌표 (y, x)
+    x좌표 기준 오름차순 정렬
+    x좌표 픽셀 차이가 10 이하인 경우 y좌표로 정렬
     """
-    # x좌표(첫 번째 열)를 기준으로 오름차순 정렬
-    sorted_indices = np.argsort(dots[:, 1])
-    sorted_dots = dots[sorted_indices]
-    return sorted_dots
+    # x좌표로 먼저 정렬
+    sorted_by_x = dots[np.argsort(dots[:, 1])]
+    
+    # 결과 배열 초기화
+    result = np.zeros_like(sorted_by_x)
+    
+    # 현재 처리 중인 인덱스(이미 처리된 인덱스 중복 처리 방지)
+    current_idx = 0
+    
+    print(sorted_by_x)
+
+    while current_idx < len(sorted_by_x):
+        # 현재 x값
+        current_x = sorted_by_x[current_idx, 1]
+        
+        # x값이 현재값과 10 이하 차이나는 점들의 인덱스 찾기
+        similar_x_indices = []
+        for i in range(current_idx, len(sorted_by_x)):
+            if sorted_by_x[i, 1] - current_x <= 10:
+                similar_x_indices.append(i)
+            else:
+                break
+        
+        # 해당 점들을 y값으로 정렬(자기 자신을 포함하기 때문에 1 초과)
+        if len(similar_x_indices) > 1:
+            points_to_sort = sorted_by_x[similar_x_indices]
+            sorted_by_y = points_to_sort[np.argsort(points_to_sort[:, 0])]
+            result[current_idx:current_idx+len(similar_x_indices)] = sorted_by_y
+        else:
+            result[current_idx] = sorted_by_x[current_idx]
+        
+        # 다음 처리할 인덱스로 이동
+        current_idx += len(similar_x_indices)
+    
+    return result
 
 
-# 5. Procrustes 정규화
+# 5. 정렬된 좌표 (Aligned Coordinates)
 def procrustes_transform(X):
+    """
+    Orthogonal Procrustes Analysis를 이용하여 좌표 정렬
+    - 위치(translation), 크기(scale), 회전(rotation) 불변성 보장
+    
+    X: (N, 19, 2) 형태의 랜드마크 좌표 배열
+    반환: 정렬된 좌표 배열 (N, 38) - 각 좌표가 평탄화됨
+    """
+    from scipy.spatial import procrustes
+    
     X_transformed = []
-    ref_shape = X[0].reshape(19, 2)
+    # 모든 개체의 랜드마크 좌표 평균을 ref shape으로 사용
+    ref_shape = np.mean(X, axis = 0)
+    
     for shape in X:
-        _, transformed, _ = procrustes(ref_shape, shape)
-        X_transformed.append(transformed.flatten())
+        # procrustes 함수는 (mtx1, mtx2) -> (disparity, mtx1, mtx2) 반환
+        # 여기서 mtx2는 mtx1에 최적으로 정렬된 형태
+        _, _, transformed = procrustes(ref_shape, shape.reshape(19, 2))
+        X_transformed.append(transformed.flatten())  # (19,2) -> (38,) 평탄화 | (Yi, Xi)
+    
     return np.array(X_transformed)
 
 dots_list = []
@@ -121,7 +167,7 @@ y = label_array
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    X, y, test_size=0.2, random_state=4, stratify=y
 )
 
 svm_model = SVC(kernel='rbf', C=30, gamma=0.30, probability=True)

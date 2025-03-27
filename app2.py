@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 
 from sklearn.cluster import KMeans
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score
@@ -95,7 +95,7 @@ label_array = np.array(label_list)               # (N,)
 def sort_dots(dots):
     """
     dots: (19, 2) 형태의 랜드마크 좌표 (y, x)
-    x좌표(dots[:, 1]) 기준 오름차순 정렬
+    x좌표 기준 오름차순 정렬
     x좌표 픽셀 차이가 10 이하인 경우 y좌표로 정렬
     """
     # x좌표로 먼저 정렬
@@ -104,7 +104,7 @@ def sort_dots(dots):
     # 결과 배열 초기화
     result = np.zeros_like(sorted_by_x)
     
-    # 현재 처리 중인 인덱스
+    # 현재 처리 중인 인덱스(이미 처리된 인덱스 중복 처리 방지)
     current_idx = 0
     
     while current_idx < len(sorted_by_x):
@@ -119,7 +119,7 @@ def sort_dots(dots):
             else:
                 break
         
-        # 해당 점들을 y값으로 정렬
+        # 해당 점들을 y값으로 정렬(자기 자신을 포함하기 때문에 1 초과)
         if len(similar_x_indices) > 1:
             points_to_sort = sorted_by_x[similar_x_indices]
             sorted_by_y = points_to_sort[np.argsort(points_to_sort[:, 0])]
@@ -129,7 +129,6 @@ def sort_dots(dots):
         
         # 다음 처리할 인덱스로 이동
         current_idx += len(similar_x_indices)
-    
     return result
 
 
@@ -143,6 +142,7 @@ def calculate_angles_between_nearest_points(dots):
       nearest_points: (19,2)
       angles: (19,)  # 각 점에서 "가장 가까운 점"과의 각도( degree )
     """
+    # 점의 개수 19개
     n_points = dots.shape[0]
     nearest_pts = []
     angles = []
@@ -156,7 +156,7 @@ def calculate_angles_between_nearest_points(dots):
         nearest_pt = dots[nearest_idx]
         
         # (delta_y, delta_x)
-        dy, dx = nearest_pt - current # 변화량
+        dy, dx = nearest_pt - current # 변화량(벡터)
         
         # arctan2(dy, dx) -> 라디안
         angle_rad = np.arctan2(dy, dx)
@@ -168,7 +168,25 @@ def calculate_angles_between_nearest_points(dots):
     return np.array(nearest_pts), np.array(angles)
 
 
-# 7. 각도 -> sin/cos 변환 (wrap-around 보완), -180~180 -> 0~360
+# 6-3 Centroid Size 구하기
+def calculate_centroid_size(dots):
+    '''
+    dots: (19, 2) (y, x) 좌표
+
+    19개의 점의 중심점인 centroid point를 구한 뒤 
+    centroid point와 19개 점 사이의 거리의 평균인 
+    centroid size 계산
+
+    반환: centroid_size
+    '''
+    n_points = dots.shape[0]
+    centroid_point = np.sum(dots, axis=0) / n_points
+    distances = np.sqrt(np.sum((dots - centroid_point)**2, axis=1))
+    centroid_size = np.mean(distances)
+    return centroid_size
+    
+
+# 7. 각도 -> sin/cos 변환, -180~180 -> 0~360
 def convert_angles_to_sin_cos(angles_deg):
     """
     angles_deg: shape=(19,)  # degree
@@ -191,19 +209,22 @@ for i in range(len(all_dots)):
 
     # 각도 계산
     _, angles = calculate_angles_between_nearest_points(sorted_landmarks)
-    
+
     # sin/cos 변환
-    feature_38 = convert_angles_to_sin_cos(angles)
-    angle_features_sin_cos.append(feature_38)
+    feature_38 = np.array(convert_angles_to_sin_cos(angles))
+    centroid_size = calculate_centroid_size(sorted_landmarks)
+    feature_39 = np.append(feature_38, centroid_size)  # numpy array로 처리
+    angle_features_sin_cos.append(feature_39)
 
 X_sin_cos = np.array(angle_features_sin_cos)  # shape: (N, 38)
+print(X_sin_cos.shape)
 y = label_array  # (N,)
 
 
 # 9. SVM 분류
 # 9-1. Train/Test split
 X_train, X_test, y_train, y_test = train_test_split(
-    X_sin_cos, y, test_size=0.5, random_state=42, stratify=y
+    X_sin_cos, y, test_size=0.2, random_state=126, stratify=y
 )
 
 # 9-2. (선택) 표준화
@@ -212,14 +233,40 @@ X_train_scaled = scaler.fit_transform(X_train)
 X_test_scaled  = scaler.transform(X_test)
 
 # 9-3. SVM 학습
-svm_model = SVC(kernel='rbf', C=30, gamma=0.30, probability=True)
-svm_model.fit(X_train_scaled, y_train)
+param_grid = {
+    'C': [0.1, 1, 10, 30, 100],
+    'gamma': [0.01, 0.1, 0.3, 1, 10]
+}
+
+grid_search = GridSearchCV(SVC(kernel='rbf', probability=True), 
+                         param_grid, 
+                         cv=5, 
+                         scoring='accuracy')
+grid_search.fit(X_train_scaled, y_train)
+best_model = grid_search.best_estimator_
 
 # 9-4. 예측/평가
-y_pred = svm_model.predict(X_test_scaled)
+y_pred = best_model.predict(X_test_scaled)
+print(y_test)
+print(y_pred)
 acc = accuracy_score(y_test, y_pred)
 print(f"[SVM 분류] 정확도: {acc*100:.2f}%")
 
+# 9-5. 모델 저장
+import joblib
+import os
+
+# 저장할 디렉토리 생성
+save_dir = './saved_models'
+os.makedirs(save_dir, exist_ok=True)
+
+# 모델 저장
+joblib.dump(best_model, os.path.join(save_dir, 'svm_model.joblib'))
+joblib.dump(scaler, os.path.join(save_dir, 'scaler.joblib'))
+
+print(f"\n모델이 {save_dir} 디렉토리에 저장되었습니다.")
+print("- svm_model.joblib: 학습된 SVM 모델")
+print("- scaler.joblib: 데이터 스케일링 모델")
 
 # (필요시) 모든 샘플 시각화
 def visualize_landmarks_on_image(dataset, all_centers):

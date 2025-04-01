@@ -85,47 +85,53 @@ label_array = np.array(label_list)
 
 
 # 4-2. 좌표 정렬
-def sort_dots(dots):
+def sort_dots(dots, x_thresh=5):
     """
-    dots: (19, 2) 형태의 랜드마크 좌표 (y, x)
-    x좌표 기준 오름차순 정렬
-    x좌표 픽셀 차이가 10 이하인 경우 y좌표로 정렬
+    dots: (N, 2) 형태의 랜드마크 좌표 (y, x)
+    x좌표를 전역 오름차순으로 본 뒤,
+    x좌표 차이가 x_thresh 이하인 점들은 같은 '묶음'으로 보고,
+    그 묶음 안에서는 y 오름차순으로 정렬합니다.
     """
-    # x좌표로 먼저 정렬
+    # 1) x좌표로 전체 오름차순 정렬
+    #    dots[:,1]이 x, dots[:,0]이 y
     sorted_by_x = dots[np.argsort(dots[:, 1])]
     
-    # 결과 배열 초기화
-    result = np.zeros_like(sorted_by_x)
-    
-    # 현재 처리 중인 인덱스(이미 처리된 인덱스 중복 처리 방지)
-    current_idx = 0
-    
-    print(sorted_by_x)
+    # 2) 그룹핑 & 그룹 내 y 오름차순
+    groups = []
+    current_group = [sorted_by_x[0]]
 
-    while current_idx < len(sorted_by_x):
-        # 현재 x값
-        current_x = sorted_by_x[current_idx, 1]
+    for i in range(1, len(sorted_by_x)):
+        # 현재 보고 있는 점
+        point = sorted_by_x[i]
+        # 현재 그룹의 마지막 점
+        last_point_in_group = current_group[-1]
         
-        # x값이 현재값과 10 이하 차이나는 점들의 인덱스 찾기
-        similar_x_indices = []
-        for i in range(current_idx, len(sorted_by_x)):
-            if sorted_by_x[i, 1] - current_x <= 10:
-                similar_x_indices.append(i)
-            else:
-                break
-        
-        # 해당 점들을 y값으로 정렬(자기 자신을 포함하기 때문에 1 초과)
-        if len(similar_x_indices) > 1:
-            points_to_sort = sorted_by_x[similar_x_indices]
-            sorted_by_y = points_to_sort[np.argsort(points_to_sort[:, 0])]
-            result[current_idx:current_idx+len(similar_x_indices)] = sorted_by_y
+        # 만약 x좌표 차이가 x_thresh 이하면 같은 그룹에 계속 쌓는다
+        if (point[1] - last_point_in_group[1]) <= x_thresh:
+            current_group.append(point)
         else:
-            result[current_idx] = sorted_by_x[current_idx]
-        
-        # 다음 처리할 인덱스로 이동
-        current_idx += len(similar_x_indices)
-    
+            # 기존 그룹 확정 → 그룹 내 y 오름차순 정렬
+            current_group = np.array(current_group)
+            current_group = current_group[np.argsort(current_group[:, 0])]
+            groups.append(current_group)
+
+            # 새로운 그룹 시작
+            current_group = [point]
+
+    # 마지막 그룹도 정리
+    current_group = np.array(current_group)
+    current_group = current_group[np.argsort(current_group[:, 0])]
+    groups.append(current_group)
+
+    # 3) 모든 그룹을 순서대로 합침
+    result = np.concatenate(groups, axis=0)
+    result = adjust_element(result)
     return result
+
+# 5-2. 정교하게 한번 더 정렬
+def adjust_element(element):
+    element[5:10] = element[5:10][np.argsort(element[5:10, 0])]
+    return element
 
 
 # 5. 정렬된 좌표 (Aligned Coordinates)

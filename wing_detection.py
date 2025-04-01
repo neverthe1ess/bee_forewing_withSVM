@@ -16,9 +16,6 @@ def train_model():
     
     results = model.train(data="coco.yaml", epochs = 100, imgsz=640)
 
-
-
-
 def detect_and_crop_wing(image_path, model, class_id=0, crop_size=(224, 224), conf_threshold=0.5):
     """
     이미지에서 날개(wing) 객체를 탐지한 후, 해당 영역을 크롭하고 전처리합니다.
@@ -59,7 +56,7 @@ def detect_and_crop_wing(image_path, model, class_id=0, crop_size=(224, 224), co
 
 if __name__ == "__main__":
     # 모델 불러오기 (가중치 파일 경로를 실제 경로로 변경)
-    model = load_model("your_yolov11_weights.pt")
+    model = load_model("./saved_models/best.pt")
     
     # 탐지할 이미지 경로 (실제 이미지 파일 경로로 변경)
     image_path = "path_to_your_image.jpg"

@@ -3,14 +3,19 @@ import os
 import cv2 
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 from PIL import Image
 from sklearn.decomposition import PCA
+from ultralytics import YOLO
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, data_dir, transform=None):
+    def __init__(self, data_dir, yolo_model, transform=None, conf_threshold=0.25):
+        super().__init__()
         self.data_dir = data_dir
+        self.yolo_model = yolo_model
         self.transform = transform
+        self.conf_threshold = conf_threshold
         self.classes = sorted(os.listdir(data_dir))
 
         self.filepaths = []
@@ -18,7 +23,8 @@ class Dataset(torch.utils.data.Dataset):
 
         for class_index, class_name in enumerate(self.classes):
             class_folder = os.path.join(data_dir, class_name)
-            image_files = glob.glob(os.path.join(class_folder, '*.jpg')) + glob.glob(os.path.join(class_folder, '*.png'))
+            image_files = glob.glob(os.path.join(class_folder, '*.jpg')) \
+                        + glob.glob(os.path.join(class_folder, '*.png'))
             for filename in image_files:
                 self.filepaths.append(filename)
                 self.labels.append(class_index)
@@ -31,6 +37,34 @@ class Dataset(torch.utils.data.Dataset):
         label = self.labels[index]
 
         img = Image.open(img_path).convert("L")
+
+        # ------------------------------------------------------------
+        # 3) YOLO 모델로 추론 -> bounding box 얻기
+        # ------------------------------------------------------------
+        results = self.yolo_model.predict(img, verbose=False)  
+        # 결과는 리스트이고, 보통 results[0]에 해당 이미지의 예측 정보가 들어있음.
+        # YOLOv8에서는 results[0].boxes 내부에 여러 box가 있을 수 있음.
+
+        if len(results[0].boxes) > 0:
+            boxes = results[0].boxes  # ultralytics.yolo.engine.results.Boxes 객체
+            best_box = None
+            best_conf = 0.0
+
+            for box in boxes:
+                conf = float(box.conf[0])  # YOLOv8 box.conf는 tensor, 여기선 첫 번째 값만.
+                if conf > best_conf:
+                    best_conf = conf
+                    best_box = box.xyxy[0].cpu().numpy()  # 텐서를 numpy로 변환 (xmin, ymin, xmax, ymax)
+
+            if best_box is not None and best_conf >= self.conf_threshold:
+                xmin, ymin, xmax, ymax = best_box
+                xmin, ymin, xmax, ymax = map(int, [xmin, ymin, xmax, ymax])
+
+                # pillow에서 crop은 (left, upper, right, lower)
+                img = img.crop((xmin, ymin, xmax, ymax))
+        else:
+            # 만약 검출된 box가 전혀 없다면, 원본 이미지를 그대로 사용하거나 예외 처리
+            pass
 
         if self.transform:
             img = self.transform(img)
